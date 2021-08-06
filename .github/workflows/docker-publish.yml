@@ -56,5 +56,5 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ secrets.IMAGE_NAME }}:latest
+          tags: kodcloud/kodbox:latest
           labels: ${{ steps.meta.outputs.labels }}
