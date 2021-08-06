@@ -1,7 +1,7 @@
 FROM php:7.4-fpm-alpine3.14
 
 ENV KODEXPLORER_VERSION 4.46
-ENV LD_PRELOAD /usr/lib/preloadable_libiconv.so php
+#ENV LD_PRELOAD /usr/lib/preloadable_libiconv.so php
 
 # entrypoint.sh and dependencies
 RUN set -ex; \
