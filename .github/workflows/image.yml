@@ -1,8 +1,6 @@
 name: buildx
 
 on:
-#  schedule:
-#    - cron: '0 0 * * *' # everyday at 0+8am
   push:
     branches: master
     tags:
