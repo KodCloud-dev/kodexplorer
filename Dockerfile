@@ -1,24 +1,27 @@
-FROM php:7.4-fpm-alpine3.14
+FROM php:7.4-fpm-alpine3.16
 
-ENV KODEXPLORER_VERSION 4.46
-#ENV LD_PRELOAD /usr/lib/preloadable_libiconv.so php
+ENV KODEXPLORER_VERSION 4.50
+
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 # entrypoint.sh and dependencies
 RUN set -ex; \
     \
     apk update && apk upgrade &&\
     apk add --no-cache \
+        bash \
         rsync \
-	supervisor \
-	imagemagick \
-	ffmpeg \
-	tzdata \
-	nginx \
-	# forward request and error logs to docker log collector
-	  && ln -sf /dev/stdout /var/log/nginx/access.log \
-	  && ln -sf /dev/stderr /var/log/nginx/error.log \
-	  && mkdir -p /run/nginx \
-	  && mkdir -p /var/log/supervisor && \
+	    supervisor \
+        imagemagick \
+        ffmpeg \
+        tzdata \
+        unzip \
+	    nginx \
+	    # forward request and error logs to docker log collector
+        && ln -sf /dev/stdout /var/log/nginx/access.log \
+        && ln -sf /dev/stderr /var/log/nginx/error.log \
+        && mkdir -p /run/nginx \
+        && mkdir -p /var/log/supervisor && \
 	cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
 	echo "Asia/Shanghai" > /etc/timezone
 
@@ -37,11 +40,8 @@ RUN mkdir -p /etc/nginx/sites-available/; \
     chown -R nginx:root /var/www; \
     chmod -R g=u /var/www
 
-ADD conf/nginx-site.conf /etc/nginx/sites-available/default.conf
-ADD conf/nginx-site-ssl.conf /etc/nginx/sites-available/default-ssl.conf
 ADD conf/private-ssl.conf /etc/nginx/sites-available/private-ssl.conf
-RUN ln -s /etc/nginx/sites-available/default.conf /etc/nginx/sites-enabled/default.conf
-  
+
 # install the PHP extensions we need
 RUN set -ex; \
     \
@@ -58,7 +58,6 @@ RUN set -ex; \
         libzip-dev \
         pcre-dev \
         libwebp-dev \
-        gmp-dev \
     ; \
     \
     docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp; \
@@ -70,9 +69,7 @@ RUN set -ex; \
         intl \
         opcache \
         pcntl \
-        pdo_mysql \
         zip \
-        gmp \
     ; \
     \
     runDeps="$( \
@@ -90,7 +87,6 @@ ENV php_vars /usr/local/etc/php/conf.d/docker-vars.ini
 RUN echo "cgi.fix_pathinfo=1" > ${php_vars} &&\
     echo "upload_max_filesize = 512M"  >> ${php_vars} &&\
     echo "post_max_size = 512M"  >> ${php_vars} &&\
-    echo "variables_order = \"EGPCS\""  >> ${php_vars} && \
     echo "memory_limit = 512M"  >> ${php_vars} && \
     echo "max_execution_time = 3600"  >> ${php_vars} && \
     echo "max_input_time = 3600"  >> ${php_vars} && \
@@ -118,7 +114,7 @@ RUN set -ex; \
     ; \
     \
     curl -fsSL -o kodexplorer.zip \
-		"https://flyaws.s3.ap-east-1.amazonaws.com/server/releases/kodexplorer${KODEXPLORER_VERSION}.zip"; \ 
+		"https://static.kodcloud.com/update/download/kodexplorer${KODEXPLORER_VERSION}.zip"; \ 
     export GNUPGHOME="$(mktemp -d)"; \
     unzip kodexplorer.zip -d /usr/src/kodexplorer/; \
     gpgconf --kill all; \
@@ -127,6 +123,8 @@ RUN set -ex; \
     apk del .fetch-deps
 
 COPY entrypoint.sh /
+
+EXPOSE 80 443
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord","-n","-c","/etc/supervisord.conf"]
