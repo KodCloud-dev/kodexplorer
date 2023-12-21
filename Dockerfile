@@ -1,6 +1,6 @@
-FROM php:7.4-fpm-alpine3.16
+FROM php:8.2-fpm-alpine3.18
 
-ENV KODEXPLORER_VERSION 4.50
+ENV KODEXPLORER_VERSION 4.52
 
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
@@ -78,13 +78,24 @@ RUN set -ex; \
             | sort -u \
             | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
     )"; \
-    apk add --virtual .kodexplorer-phpext-rundeps $runDeps; \
+    apk add --no-network --virtual .kodexplorer-phpext-rundeps $runDeps; \
     apk del .build-deps
 
 # tweak php-fpm config
 ENV fpm_conf /usr/local/etc/php-fpm.d/www.conf
 ENV php_vars /usr/local/etc/php/conf.d/docker-vars.ini
-RUN echo "cgi.fix_pathinfo=1" > ${php_vars} &&\
+RUN { \
+        echo 'opcache.enable=1'; \
+        echo 'opcache.interned_strings_buffer=32'; \
+        echo 'opcache.max_accelerated_files=10000'; \
+        echo 'opcache.memory_consumption=128'; \
+        echo 'opcache.save_comments=1'; \
+        echo 'opcache.revalidate_freq=60'; \
+        echo 'opcache.jit=1255'; \
+        echo 'opcache.jit_buffer_size=128M'; \
+    } > "${PHP_INI_DIR}/conf.d/opcache-recommended.ini"; \
+    \
+    echo "cgi.fix_pathinfo=1" > ${php_vars} &&\
     echo "upload_max_filesize = 512M"  >> ${php_vars} &&\
     echo "post_max_size = 512M"  >> ${php_vars} &&\
     echo "memory_limit = 512M"  >> ${php_vars} && \
@@ -109,22 +120,17 @@ RUN echo "cgi.fix_pathinfo=1" > ${php_vars} &&\
 VOLUME /var/www/html
 
 RUN set -ex; \
-    apk add --no-cache --virtual .fetch-deps \
-        gnupg \
-    ; \
-    \
     curl -fsSL -o kodexplorer.zip \
 		"https://static.kodcloud.com/update/download/kodexplorer${KODEXPLORER_VERSION}.zip"; \ 
-    export GNUPGHOME="$(mktemp -d)"; \
     unzip kodexplorer.zip -d /usr/src/kodexplorer/; \
-    gpgconf --kill all; \
-    rm kodexplorer.zip \
-    rm -rf "$GNUPGHOME"; \
-    apk del .fetch-deps
+    curl -fsSL -o update.zip \
+        "http://static.kodcloud.com/update/update/2.0-${KODEXPLORER_VERSION}.zip"; \
+    mv update.zip /usr/src/kodexplorer/; \
+    rm kodexplorer.zip
 
 COPY entrypoint.sh /
 
 EXPOSE 80 443
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["/usr/bin/supervisord","-n","-c","/etc/supervisord.conf"]
+CMD ["supervisord","-n","-c","/etc/supervisord.conf"]
