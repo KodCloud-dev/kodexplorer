@@ -2,7 +2,7 @@ FROM php:8.2-fpm-alpine3.18
 
 ENV KODEXPLORER_VERSION 4.52
 
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+# RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 # entrypoint.sh and dependencies
 RUN set -ex; \
