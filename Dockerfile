@@ -1,7 +1,5 @@
 FROM php:8.2-fpm-alpine3.18
 
-ENV KODEXPLORER_VERSION 4.52
-
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 # entrypoint.sh and dependencies
@@ -11,13 +9,13 @@ RUN set -ex; \
     apk add --no-cache \
         bash \
         rsync \
-	    supervisor \
+	supervisor \
         imagemagick \
         ffmpeg \
         tzdata \
         unzip \
-	    nginx \
-	    # forward request and error logs to docker log collector
+	nginx \
+	# forward request and error logs to docker log collector
         && ln -sf /dev/stdout /var/log/nginx/access.log \
         && ln -sf /dev/stderr /var/log/nginx/error.log \
         && mkdir -p /run/nginx \
@@ -118,6 +116,8 @@ RUN { \
         ${fpm_conf}
 
 VOLUME /var/www/html
+
+ENV KODEXPLORER_VERSION 4.52
 
 RUN set -ex; \
     curl -fsSL -o kodexplorer.zip \

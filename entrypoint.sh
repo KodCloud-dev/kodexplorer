@@ -63,13 +63,13 @@ if expr "$1" : "supervisord" 1>/dev/null || [ "${KODEXPLORER_UPDATE:-0}" -eq 1 ]
             # Install
             if [ "$installed_version" = "0.0.0" ]; then
                 echo "New kodexplorer instance"
-                rsync $rsync_options --delete --exclude '/*.zip' /usr/src/kodexplorer/ /var/www/html/
+                rsync $rsync_options --exclude '/*.zip' /usr/src/kodexplorer/ /var/www/html/
                 
             # Upgrade
             else
                 if [ -f "/usr/src/kodexplorer/update.zip" ]; then
-                    unzip -o /usr/src/kodexplorer/update.zip -d /var/www/html/
-                    chown -R nginx:nginx /var/www/html
+                    unzip -o /usr/src/kodexplorer/update.zip -d /usr/src/update
+                    rsync $rsync_options /usr/src/update/ /var/www/html/
                 fi
             fi
             echo "Initializing finished"
