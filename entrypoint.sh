@@ -21,6 +21,13 @@ if [ -n "${PUID+x}" ]; then
     chown -R nginx:nginx /var/lib/nginx/
 fi
 
+if [ -n "${FPM_MAX+x}" ] && [ -n "${FPM_START+x}" ] && [ -n "${FPM_MIN_SPARE+x}" ] && [ -n "${FPM_MAX_SPARE+x}" ]; then
+    sed -i "s/pm.max_children = .*/pm.max_children = ${FPM_MAX}/g" /usr/local/etc/php-fpm.d/www.conf
+    sed -i "s/pm.start_servers = .*/pm.start_servers = ${FPM_START}/g" /usr/local/etc/php-fpm.d/www.conf
+    sed -i "s/pm.min_spare_servers = .*/pm.min_spare_servers = ${FPM_MIN_SPARE}/g" /usr/local/etc/php-fpm.d/www.conf
+    sed -i "s/pm.max_spare_servers = .*/pm.max_spare_servers = ${FPM_MAX_SPARE}/g" /usr/local/etc/php-fpm.d/www.conf
+fi
+
 if expr "$1" : "supervisord" 1>/dev/null || [ "${KODEXPLORER_UPDATE:-0}" -eq 1 ]; then
     uid="$(id -u)"
     gid="$(id -g)"
