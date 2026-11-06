@@ -11,6 +11,53 @@ directory_empty() {
     [ -z "$(ls -A "$1/")" ]
 }
 
+run_as() {
+    if [ "$(id -u)" = 0 ]; then
+        su -p "$user" -s /bin/sh -c "$1"
+    else
+        sh -c "$1"
+    fi
+}
+
+# Repair existing files as well as files copied from the image/update archive.
+# Do not follow symlinks into storage mounted outside the site directory.
+fix_site_permissions() {
+    echo "Setting kodexplorer site permissions for $user:$group ..."
+    if [ "$(id -u)" = 0 ]; then
+        chown -hR "$user:$group" /var/www/html
+    fi
+    find /var/www/html -type d -exec chmod u+rwx {} +
+    find /var/www/html -type f -exec chmod u+rw {} +
+}
+
+# Execute all executable files in a given directory in alphanumeric order
+run_path() {
+    local hook_folder_path="/docker-entrypoint-hooks.d/$1"
+
+    if ! [ -d "${hook_folder_path}" ]; then
+        echo "=> Skipping the folder \"${hook_folder_path}\", because it doesn't exist"
+        return 0
+    fi
+
+    echo "=> Searching for scripts (*.sh) to run, located in the folder: ${hook_folder_path}"
+
+    find "${hook_folder_path}" -type f -maxdepth 1 -iname '*.sh' -print | sort | while read -r script_file_path; do
+        if ! [ -x "${script_file_path}" ]; then
+            echo "==> The script \"${script_file_path}\" was skipped, because it didn't have the executable flag"
+            continue
+        fi
+
+        echo "==> Running the script (cwd: $(pwd)): \"${script_file_path}\""
+
+        if run_as "${script_file_path}"; then
+            echo "==> Finished the script: \"${script_file_path}\""
+        else
+            echo "==> Failed at executing \"${script_file_path}\". Exit code: $?"
+            exit 1
+        fi
+    done
+}
+
 if [ -n "${PUID+x}" ]; then
     if [ ! -n "${PGID+x}" ]; then
         PGID=${PUID}
@@ -56,7 +103,12 @@ if expr "$1" : "supervisord" 1>/dev/null || [ "${KODEXPLORER_UPDATE:-0}" -eq 1 ]
         # shellcheck disable=SC2016
         image_version="$(php -r 'require "/usr/src/kodexplorer/config/version.php"; echo KOD_VERSION . "." . KOD_VERSION_BUILD;')"
 
-        if version_greater "$image_version" "$installed_version"; then
+        # A mounted subdirectory site has no config/version.php at the html root.
+        # Ignore our lock file when deciding whether this is an empty first install.
+        if [ "${KODEXPLORER_AUTO_UPDATE:-1}" = "0" ] && \
+            [ -n "$(find /var/www/html -mindepth 1 -maxdepth 1 ! -name kodexplorer-init-sync.lock -print -quit)" ]; then
+            echo "Keeping existing site (KODEXPLORER_AUTO_UPDATE=0); skipping image initialization and upgrade."
+        elif version_greater "$image_version" "$installed_version"; then
             echo "Initializing kodexplorer $image_version ..."
             if [ "$installed_version" != "0.0.0" ]; then
                 echo "Upgrading kodexplorer from $installed_version ..."
@@ -70,26 +122,33 @@ if expr "$1" : "supervisord" 1>/dev/null || [ "${KODEXPLORER_UPDATE:-0}" -eq 1 ]
             # Install
             if [ "$installed_version" = "0.0.0" ]; then
                 echo "New kodexplorer instance"
+                run_path pre-installation
                 rsync $rsync_options --exclude '/*.zip' /usr/src/kodexplorer/ /var/www/html/
-                
+                fix_site_permissions
+                run_path post-installation
             # Upgrade
             else
+                run_path pre-upgrade
+
                 if [ -f "/usr/src/kodexplorer/update.zip" ]; then
                     unzip -o /usr/src/kodexplorer/update.zip -d /usr/src/update
                     rsync $rsync_options /usr/src/update/ /var/www/html/
                 fi
+
+                fix_site_permissions
+                run_path post-upgrade
             fi
             echo "Initializing finished"
         fi
 
     ) 9> /var/www/html/kodexplorer-init-sync.lock
 
+    run_path before-starting
 fi
 
 if [ -f /etc/nginx/ssl/fullchain.pem ] && [ -f /etc/nginx/ssl/privkey.pem ] && [ ! -f /etc/nginx/sites-enabled/*-ssl.conf ] ; then
-        ln -s /etc/nginx/sites-available/private-ssl.conf /etc/nginx/sites-enabled/
-        sed -i "s/#return 301/return 301/g" /etc/nginx/sites-available/default.conf
+    ln -s /etc/nginx/sites-available/private-ssl.conf /etc/nginx/sites-enabled/
+    sed -i "s/#return 301/return 301/g" /etc/nginx/nginx.conf
 fi
 
 exec "$@"
-

@@ -1,0 +1,86 @@
+# Native LoongArch64 build: docker build -f Dockerfile.loong64 -t kodexplorer:loong64 .
+ARG PHP_BASE=lcr.loongnix.cn/library/php:8.4-alpine-fpm
+FROM ${PHP_BASE}
+ARG BUILD_JOBS=8
+ARG ALPINE_MIRROR=https://mirrors.aliyun.com/alpine
+ARG KODEXPLORER_VERSION=4.56
+RUN set -eux; \
+    cp /etc/apk/repositories /tmp/apk-repositories; \
+    sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+    addgroup -g 101 -S nginx; \
+    adduser -S -D -H -u 101 -h /var/cache/nginx -s /sbin/nologin -G nginx nginx; \
+    apk add --no-cache bash rsync supervisor imagemagick imagemagick-pdf \
+        imagemagick-jpeg imagemagick-raw imagemagick-tiff imagemagick-heic \
+        imagemagick-webp imagemagick-svg ffmpeg tzdata unzip p7zip nginx \
+        coreutils; \
+    ln -sf /dev/stdout /var/log/nginx/access.log; \
+    ln -sf /dev/stderr /var/log/nginx/error.log; \
+    mkdir -p /run/nginx /var/log/supervisor /var/www/html \
+        /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/ssl \
+        /docker-entrypoint-hooks.d/pre-installation \
+        /docker-entrypoint-hooks.d/post-installation \
+        /docker-entrypoint-hooks.d/pre-upgrade \
+        /docker-entrypoint-hooks.d/post-upgrade \
+        /docker-entrypoint-hooks.d/before-starting; \
+    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
+    echo Asia/Shanghai > /etc/timezone; \
+    chown -R nginx:root /var/www; chmod -R g=u /var/www; \
+    mv /tmp/apk-repositories /etc/apk/repositories
+
+COPY conf/supervisord.conf /etc/supervisord.conf
+COPY conf/nginx.conf /etc/nginx/nginx.conf
+COPY conf/private-ssl.conf /etc/nginx/sites-available/private-ssl.conf
+
+RUN set -eux; \
+    cp /etc/apk/repositories /tmp/apk-repositories; \
+    sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+    apk add --no-cache --virtual .build-deps $PHPIZE_DEPS freetype-dev \
+        icu-dev libjpeg-turbo-dev libpng-dev libzip-dev libwebp-dev; \
+    docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp; \
+    docker-php-ext-install -j "$BUILD_JOBS" bcmath exif gd intl pcntl zip; \
+    runDeps="$(scanelf --needed --nobanner --format '%n#p' --recursive \
+        /usr/local/lib/php/extensions /usr/local/sbin/php-fpm \
+        | tr ',' '\n' | sort -u \
+        | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }')"; \
+    apk add --no-network --virtual .kodexplorer-phpext-rundeps $runDeps; \
+    apk del --no-network .build-deps; \
+    mv /tmp/apk-repositories /etc/apk/repositories
+
+# Keep the path consumed by entrypoint.sh (including FPM_* overrides).
+ENV fpm_conf=/usr/local/etc/php-fpm.d/www.conf \
+    php_vars=/usr/local/etc/php/conf.d/docker-vars.ini
+RUN set -eux; \
+    mkdir -p /usr/local/etc/php-fpm.d; \
+    printf '%s\n' '[global]' 'error_log = /proc/self/fd/2' \
+        '[www]' 'user = nginx' 'group = nginx' \
+        'listen = /var/run/php-fpm.sock' 'listen.owner = nginx' \
+        'listen.group = nginx' 'listen.mode = 0666' 'pm = dynamic' \
+        'pm.max_children = 50' 'pm.start_servers = 10' \
+        'pm.min_spare_servers = 10' 'pm.max_spare_servers = 30' \
+        'pm.max_requests = 500' 'catch_workers_output = yes' \
+        'clear_env = no' > "$fpm_conf"; \
+    printf '%s\n' 'opcache.enable=1' 'opcache.interned_strings_buffer=32' \
+        'opcache.max_accelerated_files=10000' 'opcache.memory_consumption=128' \
+        'opcache.save_comments=1' 'opcache.revalidate_freq=60' \
+        'opcache.jit=disable' > "$PHP_INI_DIR/conf.d/opcache-recommended.ini"; \
+    printf '%s\n' 'cgi.fix_pathinfo=1' 'upload_max_filesize=512M' \
+        'post_max_size=512M' 'memory_limit=512M' 'max_execution_time=3600' \
+        'max_input_time=3600' > "$php_vars"; \
+    php-fpm -t --fpm-config "$fpm_conf"
+
+RUN set -eux; \
+    curl -fsSL -A kodexplorer-docker --retry 3 --retry-delay 2 \
+        -o /tmp/kodexplorer.zip \
+        "https://static.box.kodcloud.com/update/download/kodexplorer${KODEXPLORER_VERSION}.zip"; \
+    unzip -q /tmp/kodexplorer.zip -d /usr/src/kodexplorer; \
+    curl -fsSL -A kodexplorer-docker --retry 3 --retry-delay 2 \
+        -o /usr/src/kodexplorer/update.zip \
+        "https://static.box.kodcloud.com/update/update/2.0-${KODEXPLORER_VERSION}.zip"; \
+    rm /tmp/kodexplorer.zip
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+VOLUME /var/www/html
+EXPOSE 80 443
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["supervisord", "-n", "-c", "/etc/supervisord.conf"]

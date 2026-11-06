@@ -1,27 +1,38 @@
-FROM php:8.2-fpm-alpine3.20
+FROM php:8.5.12-fpm-alpine3.24
 
-# RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
-
+# Optional Alpine mirror root, including the /alpine path.
+ARG ALPINE_MIRROR=https://dl-cdn.alpinelinux.org/alpine
 # entrypoint.sh and dependencies
 RUN set -ex; \
+    sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR%/}|g" /etc/apk/repositories; \
+    addgroup -g 101 -S nginx && \
+    adduser  -S -D -H -u 101 -h /var/cache/nginx -s /sbin/nologin -G nginx nginx && \
     \
-    apk update && apk upgrade &&\
+    apk update && apk upgrade && \
     apk add --no-cache \
         bash \
         rsync \
-	supervisor \
+        supervisor \
         imagemagick \
+        imagemagick-pdf \
+        imagemagick-jpeg \
+        imagemagick-raw \
+        imagemagick-tiff \
+        imagemagick-heic \
+        imagemagick-webp \
+        imagemagick-svg \
         ffmpeg \
         tzdata \
         unzip \
-	nginx \
-	# forward request and error logs to docker log collector
-        && ln -sf /dev/stdout /var/log/nginx/access.log \
-        && ln -sf /dev/stderr /var/log/nginx/error.log \
-        && mkdir -p /run/nginx \
-        && mkdir -p /var/log/supervisor && \
-	cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
-	echo "Asia/Shanghai" > /etc/timezone
+        p7zip \
+        nginx \
+        coreutils \
+    ; \
+    ln -sf /dev/stdout /var/log/nginx/access.log; \
+    ln -sf /dev/stderr /var/log/nginx/error.log; \
+    mkdir -p /run/nginx /var/log/supervisor; \
+    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
+    echo "Asia/Shanghai" > /etc/timezone
 
 ADD conf/supervisord.conf /etc/supervisord.conf
 
@@ -33,28 +44,28 @@ ADD conf/nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /etc/nginx/sites-available/; \
     mkdir -p /etc/nginx/sites-enabled/; \
     mkdir -p /etc/nginx/ssl/; \
-    rm -Rf /var/www/*; \
-    mkdir /var/www/html/; \
+    mkdir -p /var/www/html/; \
+    mkdir -p /docker-entrypoint-hooks.d/pre-installation \
+             /docker-entrypoint-hooks.d/post-installation \
+             /docker-entrypoint-hooks.d/pre-upgrade \
+             /docker-entrypoint-hooks.d/post-upgrade \
+             /docker-entrypoint-hooks.d/before-starting; \
     chown -R nginx:root /var/www; \
     chmod -R g=u /var/www
 
 ADD conf/private-ssl.conf /etc/nginx/sites-available/private-ssl.conf
 
 # install the PHP extensions we need
+# opcache is built into PHP 8.5 and already enabled in the official image
 RUN set -ex; \
     \
     apk add --no-cache --virtual .build-deps \
         $PHPIZE_DEPS \
-        autoconf \
         freetype-dev \
         icu-dev \
-        libevent-dev \
         libjpeg-turbo-dev \
         libpng-dev \
-        libmemcached-dev \
-        libxml2-dev \
         libzip-dev \
-        pcre-dev \
         libwebp-dev \
     ; \
     \
@@ -65,7 +76,6 @@ RUN set -ex; \
         exif \
         gd \
         intl \
-        opcache \
         pcntl \
         zip \
     ; \
@@ -77,11 +87,11 @@ RUN set -ex; \
             | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
     )"; \
     apk add --no-network --virtual .kodexplorer-phpext-rundeps $runDeps; \
-    apk del .build-deps
+    apk del --no-network .build-deps
 
 # tweak php-fpm config
-ENV fpm_conf /usr/local/etc/php-fpm.d/www.conf
-ENV php_vars /usr/local/etc/php/conf.d/docker-vars.ini
+ENV fpm_conf=/usr/local/etc/php-fpm.d/www.conf
+ENV php_vars=/usr/local/etc/php/conf.d/docker-vars.ini
 RUN { \
         echo 'opcache.enable=1'; \
         echo 'opcache.interned_strings_buffer=32'; \
@@ -101,34 +111,34 @@ RUN { \
     echo "max_input_time = 3600"  >> ${php_vars} && \
     sed -i \
         -e "s/;catch_workers_output\s*=\s*yes/catch_workers_output = yes/g" \
-        -e "s/pm.max_children = 5/pm.max_children = 50/g" \
-        -e "s/pm.start_servers = 2/pm.start_servers = 10/g" \
-        -e "s/pm.min_spare_servers = 1/pm.min_spare_servers = 10/g" \
-        -e "s/pm.max_spare_servers = 3/pm.max_spare_servers = 30/g" \
+        -e "s/^pm.max_children = .*/pm.max_children = 50/" \
+        -e "s/^pm.start_servers = .*/pm.start_servers = 10/" \
+        -e "s/^pm.min_spare_servers = .*/pm.min_spare_servers = 10/" \
+        -e "s/^pm.max_spare_servers = .*/pm.max_spare_servers = 30/" \
         -e "s/;pm.max_requests = 500/pm.max_requests = 500/g" \
         -e "s/user = www-data/user = nginx/g" \
         -e "s/group = www-data/group = nginx/g" \
-        -e "s/;listen.mode = 0660/listen.mode = 0666/g" \
-        -e "s/;listen.owner = www-data/listen.owner = nginx/g" \
-        -e "s/;listen.group = www-data/listen.group = nginx/g" \
-        -e "s/listen = 127.0.0.1:9000/listen = \/var\/run\/php-fpm.sock/g" \
+        -e "s/^;listen.mode = .*/listen.mode = 0666/" \
+        -e "s/^;listen.owner = .*/listen.owner = nginx/" \
+        -e "s/^;listen.group = .*/listen.group = nginx/" \
+        -e "s/;listen = 127.0.0.1:9000/listen = \/var\/run\/php-fpm.sock/g" \
         -e "s/^;clear_env = no$/clear_env = no/" \
         ${fpm_conf}
 
 VOLUME /var/www/html
 
-ENV KODEXPLORER_VERSION 4.52
+ENV KODEXPLORER_VERSION=4.56
 
 RUN set -ex; \
-    curl -fsSL -o kodexplorer.zip \
-		"https://static.kodcloud.com/update/download/kodexplorer${KODEXPLORER_VERSION}.zip"; \ 
+    curl -fsSL -A kodexplorer-docker --retry 3 --retry-delay 2 -o kodexplorer.zip \
+        "https://static.box.kodcloud.com/update/download/kodexplorer${KODEXPLORER_VERSION}.zip"; \
     unzip kodexplorer.zip -d /usr/src/kodexplorer/; \
-    curl -fsSL -o update.zip \
-        "http://static.kodcloud.com/update/update/2.0-${KODEXPLORER_VERSION}.zip"; \
-    mv update.zip /usr/src/kodexplorer/; \
+    curl -fsSL -A kodexplorer-docker --retry 3 --retry-delay 2 -o /usr/src/kodexplorer/update.zip \
+        "https://static.box.kodcloud.com/update/update/2.0-${KODEXPLORER_VERSION}.zip"; \
     rm kodexplorer.zip
 
 COPY entrypoint.sh /
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 80 443
 
